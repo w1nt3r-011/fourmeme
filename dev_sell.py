@@ -8,8 +8,6 @@ import yaml
 import requests
 
 
-
-
 def log(message):
     print(f"{datetime.now().strftime('%H:%M:%S.%f')} {message}")
 
@@ -17,7 +15,7 @@ def log(message):
 CONTRACT_ADDRESS = "0x5c952063c7fc8610FFDB798152D69F0B9550762b"
 dev_sell_dict = {}
 known_cas = set()
-
+latest_holdings = {}
 
 try:
     with open("dev_sell_config.yaml", "r") as config_file:
@@ -51,11 +49,13 @@ def handle_trade(trade_data):
             seller = trade_data.get("args", {}).get("account", "")
             if str(seller).lower() == str(dev_wallet).lower():
                 log(f"[TRADE] Developer just sold coin {token_address}")
-                holdings_resp = fetch_holdings(web3_client, contract_abi, token_address, PAYER_PK)
+                holdings_resp = latest_holdings.get(token_address)
                 if holdings_resp:
-                    log(f"[TRADE] Fetched holdings worth {holdings_resp["token_value"]} BNB")
+                    log(f"[TRADE] Fetched holdings worth {holdings_resp['token_value']} BNB")
                     min_bnb_out = 0
                     sell(web3_client, contract_abi, PAYER_PK, token_address, holdings_resp["token_balance"], min_bnb_out, SELL_GWEI, 250_000)
+                else:
+                    log(f"[TRADE] No cached holdings found for {token_address}")
     except Exception as e:
         log(f"[TRADE] error handling trade {str(e)}")
 
@@ -68,7 +68,7 @@ def handle_cas():
             for ca in lines:
                 if ca not in known_cas:
                     attempts = 0
-                    while attempts < 10:
+                    while attempts < 20:
                         try:
                             r = requests.get(f"https://four.meme/meme-api/v1/private/token/get/v2?address={ca}")
                             if r.status_code == 200:
@@ -81,10 +81,10 @@ def handle_cas():
                                 log(f"[FILE HANDLER] DEV: {dev_wallet}")
                                 break
                             else:
-                                time.sleep(5)
+                                time.sleep(2.5)
                         except Exception as e:
                             log(f"[FILE HANDLER] error {str(e)}")
-                            time.sleep(5)
+                            time.sleep(2.5)
                         attempts += 1
 
                     if attempts == 10:
@@ -94,8 +94,23 @@ def handle_cas():
         time.sleep(0.5)
 
 
+def holdings_loop():
+    while True:
+        try:
+            for ca in list(dev_sell_dict.keys()):
+                holdings_resp = fetch_holdings(web3_client, contract_abi, ca, PAYER_PK)
+                if holdings_resp:
+                    latest_holdings[ca] = holdings_resp
+                    log(f"[HOLDINGS] {ca} - balance: {holdings_resp['token_balance']} - value: {holdings_resp['token_value']} BNB")
+                time.sleep(1)
+        except Exception as e:
+            log(f"[HOLDINGS] error {str(e)}")
+            time.sleep(2.5)
+
+
 def main():
     threading.Thread(target=handle_cas, daemon=True).start()
+    threading.Thread(target=holdings_loop, daemon=True).start()
 
     contract = web3_client.eth.contract(address=CONTRACT_ADDRESS, abi=contract_abi)
 
@@ -118,5 +133,6 @@ def main():
                 log(f"[MONITOR] error polling events {str(e)}")
                 time.sleep(5)
                 break
+
 
 main()
