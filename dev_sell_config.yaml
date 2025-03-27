@@ -1,0 +1,3 @@
+RPC_HTTP: url
+PAYER_PK: private key
+SELL_GWEI: integer
